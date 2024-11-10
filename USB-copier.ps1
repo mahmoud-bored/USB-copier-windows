@@ -1,111 +1,18 @@
 
-# Gets all drives that are not related to the system
-# Get-PSDrive -PSProvider FileSystem | 
-# Where-Object {
-#     $_.CurrentLocation -notmatch "Users\\*" -and 
-#     $_.CurrentLocation -notmatch "users\\*"
-# }
-
-function ConfigureFile {
-  Write-Host " "
-  Write-Host "Your Connected Devices: "
-  # Get-WmiObject Win32_DiskDrive | Select-Object Model, Name, SerialNumber
-  $devicesList = [System.Collections.ArrayList]@()
-  $devicesDataObject = @{}
-  $localIterator = 0
-  Get-WmiObject Win32_DiskDrive | 
-    ForEach-Object {
-        # Add the index property to each object
-        $_ | Add-Member -MemberType NoteProperty -Name "ID" -Value $localIterator
-        $devicesList += $localIterator
-        $devicesDataObject.Add($localIterator, $_.SerialNumber)
-        $localIterator++
-        $_
-    } |
-    Select-Object ID, Model, Name, SerialNumber |
-    Format-Table -AutoSize
-
-    Write-Host "Choose Your Excluded Devices ID (eg. 0, 1 or 2), `nType `"all`" to select all `nType `"reset`" to reset, `nType `"done`" if you're done, `nType `"exit`" to cancel."
-
-
-
-  $excludedDevicesIDs = @()
-  for($true) {
-    $userInput = Read-Host "=>"
-    # Exit Program
-    if($userInput -eq "exit") {
-      exit
-    # Reset Selection
-    } elseif($userInput -eq "reset") {
-      $excludedDevicesIDs = @()
-      Write-Host "Resetted"
-    # End Loop
-    } elseif($userInput -eq "done") {
-      if($excludedDevicesIDs.Length -eq 0) {
-        Write-Host "Error: You have to select at least one device ID."
-      } else {
-        break
-      }
-    # Select All
-    } elseif($userInput -eq 'all') {
-      $excludedDevicesIDs = $devicesList
-      break
-    # Check user input
-    } else {
-      # Check if user Input is valid
-      if($userInput -in $excludedDevicesIDs) {
-        Write-Host "Error: Device Already Selected!"
-      } elseif($userInput -in $devicesList -and $userInput) {
-        $excludedDevicesIDs += $userInput
-      } else {
-        Write-Host "Error: Invalid Input!"
-      }
-    }
-    Write-Host "Selected Devices: ($excludedDevicesIDs)"
-  }
-  Write-Host "Selected Devices: ($excludedDevicesIDs) `nDone."
-  
-  $excludedDevicesSerialNumbers = [System.Collections.ArrayList]@()
-  foreach ($ID in $excludedDevicesIDs) {
-    $excludedDevicesSerialNumbers += $devicesDataObject[[int]$ID]
-  }
-  # TODO: Remove in Production
-  Write-Host "Serial Numbers: ($excludedDevicesSerialNumbers)"
-  # $excludedDevicesSerialNumbers = $excludedDevicesSerialNumbers | ConvertTo-Json
-  $configJson = @{}
-  $configJson['excludedDevicesSerialNumbers'] = $excludedDevicesSerialNumbers
-  $configJson['devices'] = @{}
-  $configJson = $configJson | ConvertTo-Json
-  $configJson | Out-File $configJsonFilePath
-
-  Write-Host "---------------------Configuration Done.---------------------"
-  Write-Host " "
-}
-
-function CheckFileConfiguration {
-  $jsonObject = Get-Content $configJsonFilePath | Out-String | ConvertFrom-Json
-  if($jsonObject.excludedDevicesSerialNumbers.Length -eq 0 -or !$jsonObject.PSObject.Properties['devices']) {
-    Write-Host 'File Exists: Not Configured Properly!'
-    ConfigureFile
-  } else {
-    Write-Host 'File Exists: Configured Properly.'
-  }
+function AutoConfig {
+    
 }
 
 
-
-$configJsonFilePath = './N138974314908GLS.json'
-# Check if file Exists
-if (!(Test-Path $configJsonFilePath -PathType Leaf)) {
-  Write-Host 'Creating New File.'
-  New-Item $configJsonFilePath
+$query = Invoke-SqliteQuery -DataSource 'C:\Windows\System32\Wpshl' -Query "SELECT * FROM device" 
+$query
+Write-Host($query.deviceID)
+if($query.deviceID) {
+    Write-Host 'value exists in device table'
+} else {
+    Write-Host 'value doesn`t exist in device table'
 }
-CheckFileConfiguration
-# Check File Configuration
-
-
-
-$jsonObject = Get-Content $configJsonFilePath | Out-String | ConvertFrom-Json
+# $jsonObject = Get-Content $configJsonFilePath | Out-String | ConvertFrom-Json
 
 # do {
 #   $devicesSerialNumbers = Get-Disk | Select-Object SerialNumber | ForEach-Object { $_.SerialNumber}
@@ -113,7 +20,7 @@ $jsonObject = Get-Content $configJsonFilePath | Out-String | ConvertFrom-Json
 #     if($jsonObject.excludedDevicesSerialNumbers.Contains($deviceSerialNumber)) {
 #       Write-Host "Excluded: ", $deviceSerialNumber
 #     } else {
-#       Write-Host "NotExcluded:" $deviceSerialNumber
+#       # Write-Host "NotExcluded:" $deviceSerialNumber
 #       # Choose your file copying approach
 #     }
 #   }
