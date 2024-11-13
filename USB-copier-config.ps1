@@ -104,35 +104,6 @@ function CheckNecessaryModules {
         }
     }
 }
-$dbTablesCreationQueries = @{
-    device = "CREATE TABLE device (
-        deviceID INTEGER PRIMARY KEY NOT NULL,
-        serialNumber TEXT NOT NULL,
-        lastFullBackup INTEGER NOT NULL DEFAULT 0,
-        backupPath TEXT,
-        isDeviceExcluded INTEGER NOT NULL DEFAULT 0,
-        author TEXT
-    )"
-    directory = "CREATE TABLE directory (
-        folderID INTEGER PRIMARY KEY NOT NULL,
-        folderPath TEXT NOT NULL,
-        folderName TEXT NOT NULL,
-        parentFolder TEXT NOT NULL,
-        deviceID INTEGER NOT NULL,
-        FOREIGN KEY(deviceID) REFERENCES device(deviceID)
-    )"
-    file = "CREATE TABLE file (
-        fileID INTEGER PRIMARY KEY NOT NULL,
-        filePath TEXT NOT NULL,
-        fileName TEXT NOT NULL,
-        fileExtension TEXT NOT NULL,
-        parentFolder TEXT NOT NULL,
-        lastWriteTimeUtc INTEGER,
-        lastBackupTimeUtc INTEGER DEFAULT 0,
-        deviceID INTEGER NOT NULL,
-        FOREIGN KEY(deviceID) REFERENCES device(deviceID)
-        )"
-}
 function CheckDbConfig {
     Write-Host "`n----------------Checking Database Config----------------"
     # Import PSSQLite
@@ -144,14 +115,13 @@ function CheckDbConfig {
         Start-Sleep -Seconds 5
         exit
     }
-
-    $global:dbPath = $workDir + '\Wpshl'
+    
     # Create Database File
-    if(!(Test-Path $global:dbPath -PathType Leaf)) {
+    if(!(Test-Path $dbPath -PathType Leaf)) {
         Write-Host "[INFO]: Database Doesn't Exist."
         Write-Host "[PROCESS]: Creating Database File..."
         try {
-            New-Item $global:dbPath
+            New-Item $dbPath
             Write-Host "[NEW]: Database Created!" -ForegroundColor Green
         } catch {
             Write-Host $_
@@ -162,79 +132,111 @@ function CheckDbConfig {
     } else {
         Write-Host "[INFO]: Database Already Exists! `n"
     }
+    
+    $dbTablesCreationQueries = @{
+        device = "CREATE TABLE device (
+            device_id INTEGER PRIMARY KEY NOT NULL,
+            device_name TEXT,
+            serial_number TEXT NOT NULL,
+            last_full_backup INTEGER NOT NULL DEFAULT 0,
+            last_live_date INTEGER NOT NULL DEFAULT 0,
+            backup_path TEXT,
+            is_device_excluded INTEGER NOT NULL DEFAULT 0,
+            author TEXT
+        )"
+        volume = "CREATE TABLE volume (
+            volume_id INTEGER PRIMARY KEY NOT NULL,
+            volume_unique_id TEXT NOT NULL,
+            volume_backup_path TEXT NOT NULL,
+            last_full_backup TEXT NOT NULL DEFAULT 0,
+            last_live_date TEXT INTEGER NOT NULL DEFAULT 0,
+            volume_size TEXT NOT NULL,
+            volume_remaining_size TEXT NOT NULL,
+            volume_filesystem_type TEXT NOT NULL,
+            device_id INTEGER NOT NULL,
+            FOREIGN KEY(device_id) REFERENCES device(device_id)
+        )"
+        directory = "CREATE TABLE directory (
+            directory_id INTEGER PRIMARY KEY NOT NULL,
+            directory_path TEXT NOT NULL,
+            directory_name TEXT NOT NULL,
+            parent_directory INTEGER NOT NULL,
+            volume_id INTEGER NOT NULL,
+            FOREIGN KEY(parent_directory) REFERENCES directory(directory_id),
+            FOREIGN KEY(volume_id) REFERENCES volume(volume_id)
+        )"
+        file = "CREATE TABLE file (
+            file_id INTEGER PRIMARY KEY NOT NULL,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_extension TEXT NOT NULL,
+            directory_id INTEGER NOT NULL,
+            volume_id INTEGER NOT NULL,
+            last_write_time_utc INTEGER,
+            last_backup_time_utc INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(directory_id) REFERENCES directory(directory_id),
+            FOREIGN KEY(volume_id) REFERENCES volume(volume_id)
+        )"
+    }
+
     Write-Host "Checking Database Tables..."
-    # Check & Create device Table
-    if(Invoke-SqliteQuery -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='device';" -DataSource $global:dbPath) {
-        Write-Host "[INFO]: Table `"device`" Exists!"
-    } else {
-        Write-Host "[INFO]: Table `"device`" Doesn't Exist."
-        try {
-            Write-Host "[PROCESS]: Creating `"device`" Table..."
-            Invoke-SqliteQuery -Query $dbTablesCreationQueries['device'] -DataSource $global:dbPath
+    # Check & Create Tables
+    foreach($dbTableName in $dbTablesCreationQueries.Keys) {
+        if(Invoke-SqliteQuery -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='$dbTableName';" -DataSource $dbPath) {
+            Write-Host "[INFO]: Table `"$dbTableName`" Exists!"
+        } else {
+            Write-Host "[INFO]: Table `"$dbTableName`" Doesn't Exist."
+            try {
+                Write-Host "[PROCESS]: Creating `"$dbTableName`" Table..."
+                Invoke-SqliteQuery -Query $dbTablesCreationQueries.$dbTableName -DataSource $dbPath
+                Write-Host "[NEW]: Table `"$dbTableName`" was Created Successfully!" -ForegroundColor Green
+            }
+            catch {
+                Write-Host $_
+                Write-Host "[ERROR]: Couldn't create `"$dbTableName`" Table, Exiting..." -ForegroundColor Red
+                Start-Sleep -Seconds 5
+                exit
+            }
         }
-        catch {
-            Write-Host $_
-            Write-Host "[ERROR]: Couldn't create `"device`" Table, Exiting..." -ForegroundColor Red
-            Start-Sleep -Seconds 5
-            exit
-        }
-        Write-Host '[NEW]: Table `"device`" was Created Successfully!' -ForegroundColor Green
     }
-    # Check & Create directory Table
-    if(Invoke-SqliteQuery -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='directory';" -DataSource $global:dbPath) {
-        Write-Host "[INFO]: Table `"directory`" Exists!"
-    } else {
-        Write-Host "[INFO]: Table `"directory`" Doesn't Exist."
-        try {
-            Write-Host "[PROCESS]: Creating `"directory`" Table..."
-            Invoke-SqliteQuery -Query $dbTablesCreationQueries['directory'] -DataSource $global:dbPath
-        }
-        catch {
-            Write-Host $_
-            Write-Host "[ERROR]: Couldn't create `"directory`" Table, Exiting..." -ForegroundColor Red
-            Start-Sleep -Seconds 5
-            exit
-        }
-        Write-Host '[NEW]: Table `"directory`" Created Successfully!' -ForegroundColor Green
-    }
-    # Check & Create file Table
-    if(Invoke-SqliteQuery -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='file';" -DataSource $global:dbPath) {
-        Write-Host "[INFO]: Table `"file`" Exists!"
-    } else {
-        Write-Host "[INFO]: Table `"file`" Doesn't Exist."
-        try {
-            Write-Host "[PROCESS]: Creating `"file`" Table..."
-            Invoke-SqliteQuery -Query $dbTablesCreationQueries['file'] -DataSource $global:dbPath
-        }
-        catch {
-            Write-Host $_
-            Write-Host "[ERROR]: Couldn't create `"file`" Table, Exiting..." -ForegroundColor Red
-            Start-Sleep -Seconds 5
-            exit
-        }
-        Write-Host '[NEW]: Table `"file`" Created Successfully!' -ForegroundColor Green
-    }
+
 }
 
 function SetExcludedDevicesInDb {
     Write-Host "Excluded Devices $global:excludedDevicesSerialNumbers"
     foreach($deviceSerialNumber in $global:excludedDevicesSerialNumbers) {
-        $query = Invoke-SqliteQuery -DataSource 'C:\Windows\System32\Wpshl' -Query "SELECT deviceID FROM device WHERE serialNumber='$deviceSerialNumber'" 
-        if($query.deviceID){
+        $deviceName = Get-Disk | Where-Object { $_.SerialNumber -eq $deviceSerialNumber } | Select-Object FriendlyName | ForEach-Object { $_.FriendlyName }
+        $query = Invoke-SqliteQuery -DataSource 'C:\Windows\System32\Wpshl' -Query "SELECT device_id FROM device WHERE serial_number='$deviceSerialNumber'" 
+        if($query.device_id){
             Write-Host "[INFO]: Device Exists, Updating $deviceSerialNumber"
-            Invoke-SqliteQuery -DataSource $global:dbPath "
-                UPDATE device SET isDeviceExcluded = 1 WHERE deviceID = '$($query.deviceID)'
+            Invoke-SqliteQuery -DataSource $dbPath "
+                UPDATE device SET isDeviceExcluded = 1 WHERE device_id = '$($query.device_id)'
             "
         } else {
-            Write-Host "[NEW]: Regestering new device"
-            Invoke-SqliteQuery -DataSource $global:dbPath "
-                INSERT INTO device (serialNumber, isDeviceExcluded)
-                VALUES ('$deviceSerialNumber', 1)
+            Write-Host "[NEW]: Registering new device"
+            Invoke-SqliteQuery -DataSource $dbPath "
+                INSERT INTO device (device_name, serial_number, is_device_excluded)
+                VALUES ('$deviceName', '$deviceSerialNumber', 1)
             "
         }
     }
 }
+function CreateLogFile {
+    if(!(Test-Path $logFilePath -PathType Leaf)) {
+        try {
+            New-Item $logFilePath
+            Write-Host "[NEW]: Log file Created!" -ForegroundColor Green
+        } catch {
+            Write-Host $_
+            Write-Host "[ERROR]: Couldn't Create Log file, Exiting..." -ForegroundColor Red
+            Start-Sleep -Seconds 5
+            exit
+        }
+    }
+}
 $workDir = 'C:\Windows\System32'
+$dbPath = $workDir + '\Wpshl'
+$logFilePath = $workDir + '\n138974314908GLs'
 function Main {
     # Check for Adminstrator Access
     if(!(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
@@ -242,6 +244,7 @@ function Main {
         Start-Sleep -Seconds 5
         exit
     }
+    CreateLogFile
     GetExcludedDevices
     CheckNecessaryModules
     CheckDbConfig
