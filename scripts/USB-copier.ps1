@@ -157,7 +157,7 @@ function CheckExcludedDevices{
         $devicesSerialNumbers = Get-Disk | Select-Object SerialNumber | ForEach-Object { $_.SerialNumber }
         foreach($deviceSerialNumber in $devicesSerialNumbers) {
             $deviceName = Get-Disk | Where-Object { $_.SerialNumber -eq $deviceSerialNumber } | Select-Object FriendlyName | ForEach-Object { $_.FriendlyName }
-            Write-Host "[NEW]: Regestering new device <$deviceName::$deviceSerialNumber>"
+            # Write-Host "[NEW]: Regestering new device <$deviceName::$deviceSerialNumber>"
             Invoke-SqliteQuery -DataSource $dbPath "
                 INSERT INTO device (device_name, serial_number, is_device_excluded)
                 VALUES ('$deviceName', '$deviceSerialNumber', 1)
@@ -371,14 +371,14 @@ function CheckDeviceVolumes {
 
     LogMessage "Checking <$deviceSerialNumber> Device Volumes..."
     foreach($diskVolumeData in $diskVolumes) {
-        Write-Host "Checking Volume <$($diskVolumeData.UniqueId)>"
+        # Write-Host "Checking Volume <$($diskVolumeData.UniqueId)>"
         LogMessage "Checking Volume <$($diskVolumeData.UniqueId)>"
         # Check if volume exists in database
         $isVolumeRegistered = $registeredDeviceVolumes | Where-Object { $_.volume_unique_id -eq $diskVolumeData.UniqueId } 
         if($isVolumeRegistered) {
             # Volume Already Exists
-            Write-Host "Volume is Already Registered."
-            Write-Host "Updating Volume <$($diskVolumeData.UniqueId)> Data."
+            # Write-Host "Volume is Already Registered."
+            # Write-Host "Updating Volume <$($diskVolumeData.UniqueId)> Data."
             LogMessage "[INFO]: Volume is Already Registered."
             if(!(Test-Path -Path $isVolumeRegistered.volume_backup_path)) {
                 New-Item -Path $isVolumeRegistered.volume_backup_path -Type Directory
@@ -409,7 +409,7 @@ function CheckDeviceVolumes {
             }
         } else {
             # Volume Doesn't Exist, Setup New Volume 
-            Write-Host "Volume <$($diskVolumeData.UniqueId)> not Registered."
+            # Write-Host "Volume <$($diskVolumeData.UniqueId)> not Registered."
             LogMessage "Volume <$($diskVolumeData.UniqueId)> is not Registered."
 
             RegisterNewVolume $deviceSerialNumber $deviceBackupPath $diskVolumeData 
@@ -452,7 +452,7 @@ function RegisterAndCreateDirectories {
         } else {
             LogMessage "[INFO]: Directory <$($_.FullName)> is Already Registered."
         }
-        Write-Host "$($_.Name): $($_.FullName)"
+        # Write-Host "$($_.Name): $($_.FullName)"
     }
 }
 function StartBackupForFileExtension {
@@ -470,14 +470,14 @@ function StartBackupForFileExtension {
     Get-ChildItem -Recurse -File $volumeDrivePath -Filter $fileExtensionFilter | 
         Where-Object { $_.Extension -notin $fileExtensionExceptions } |
         ForEach-Object {
-            Write-Host "$($_.Name): $($_.FullName)"
+            # Write-Host "$($_.Name): $($_.FullName)"
             $directoryPath = $_.FullName.Replace("$($volumeDriveLetter):", "")
             $directoryID = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT directory_id FROM directory WHERE directory_path = `"$($directoryPath.Substring(0,$directoryPath.Length - $_.Name.Length))`"").directory_id
             $lastWriteTimeUtc = [uint64]$_.LastWriteTimeUtc.ToUniversalTime().ToString('yyyyMMddHHmmss')
             $fileSize = [uint64]$_.Length
             $fileDataFromDb = Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT file_id, last_write_time_utc, file_size FROM file WHERE file_path = `"$directoryPath`""
             if($fileDataFromDb.file_id) {
-                Write-Host "File is Already Registered."
+                # Write-Host "File is Already Registered."
                 # Update Registered File in Database 
                 if(($lastWriteTimeUtc -gt $fileDataFromDb.last_write_time_utc) -or ($fileSize -ne $fileDataFromDb.file_size)) {
                     # File content has changed
@@ -501,7 +501,7 @@ function StartBackupForFileExtension {
                 }
             } else {
                 try {
-                    Write-Host "File is Not Registered."
+                    # Write-Host "File is Not Registered."
                     # Register & Copy New File in Database
                     LogMessage "[CHANGE::PROCESS]: New File Detected at <$directoryPath>, Registering New File."
                     Copy-Item $_.FullName -Destination "$($volumeBackupPath + $directoryPath)"
@@ -572,22 +572,27 @@ function InitiateVolumeBackup {
         [string]$volumeDriveLetter
     )
     $volumeID = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT volume_id FROM volume WHERE volume_unique_id = `"$volumeUniqueId`"").volume_id
+    if(Test-Path -Path "$($volumeDriveLetter):\HC!_dncme.txt" -PathType Leaf) {
+        LogMessage "File <HC!_dncme.txt> Found!"
+        LogMessage "Cancelling Volume <$volumeUniqueId> Backup."
+    } else {
+        LogMessage "Backing up <$volumeUniqueId> at <$volumeDriveLetter>"
+        RegisterAndCreateDirectories $volumeDriveLetter $volumeID
+        RegisterAndCopyFiles $volumeDriveLetter $volumeID    
+    
+        # Update Volume Last Full Backup Date
+        try {
+            Invoke-SqliteQuery -DataSource $dbPath -Query "
+                UPDATE volume
+                SET last_full_backup_date = $([uint64](Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))
+                WHERE volume_id = $volumeID
+            "
+            LogMessage '[NEW]: Volume last_full_backup_date Updated Successfully.'
+        } catch {
+            LogMessage $_
+            LogMessage "[ERROR]: Couldn`'t Update Volume last_full_backup_date."
+        }
 
-    LogMessage "Backing up <$volumeUniqueId> at <$volumeDriveLetter>"
-    RegisterAndCreateDirectories $volumeDriveLetter $volumeID
-    RegisterAndCopyFiles $volumeDriveLetter $volumeID    
-
-    # Update Volume Last Full Backup Date
-    try {
-        Invoke-SqliteQuery -DataSource $dbPath -Query "
-            UPDATE volume
-            SET last_full_backup_date = $([uint64](Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))
-            WHERE volume_id = $volumeID
-        "
-        LogMessage '[NEW]: Volume last_full_backup_date Updated Successfully.'
-    } catch {
-        LogMessage $_
-        LogMessage "[ERROR]: Couldn`'t Update Volume last_full_backup_date."
     }
 }
 function InitiateDeviceBackup {
@@ -651,31 +656,31 @@ function Main {
                         # Check if device is Excluded
                         $isDeviceExcluded = $registeredDevices | Where-Object { $_.serial_number -eq $deviceSerialNumber } | ForEach-Object { $_.is_device_excluded }
                         if($isDeviceExcluded) {
-                            Write-Host "New Excluded Device was Attached: <$deviceName::$deviceSerialNumber>"
+                            # Write-Host "New Excluded Device was Attached: <$deviceName::$deviceSerialNumber>"
                             LogMessage "New Excluded Device was Attached: <$deviceName::$deviceSerialNumber>"
                         } else {
-                            Write-Host "New Device was Attached: <$deviceName::$deviceSerialNumber>"
+                            # Write-Host "New Device was Attached: <$deviceName::$deviceSerialNumber>"
                             LogMessage "New Device was Attached: <$deviceName::$deviceSerialNumber>"
 
                             InitiateDeviceBackup $deviceSerialNumber
                         }
                     } else {
                         # Device is not Registered
-                        Write-Host "New Unregistered Device was Attached: <$deviceName::$deviceSerialNumber>"
+                        # Write-Host "New Unregistered Device was Attached: <$deviceName::$deviceSerialNumber>"
                         LogMessage "New Unregistered Device was Attached: <$deviceName::$deviceSerialNumber>"
                         # Register the new device
                         RegisterNewDevice $deviceSerialNumber $deviceName
                         InitiateDeviceBackup $deviceSerialNumber
                     }
                 } else {
-                    Write-Host "Device Detached: $deviceSerialNumber"
+                    # Write-Host "Device Detached: $deviceSerialNumber"
                     LogMessage "Device Detached: $deviceSerialNumber"
                 }
                 
                 $attachedDevicesSerialNumbers = $currentAttachedDevicesSerialNumbers
             }
         } else {
-            Write-Host 'No Changes Yet'
+            # Write-Host 'No Changes Yet'
         }
         Start-Sleep -Seconds 5
     } while ($True)

