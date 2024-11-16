@@ -11,7 +11,7 @@ And you'll probably forget that it's on your machine...
 
 ## Installation
 
-1. Run `install-USB-copier.bat` file.   
+1. Download the repository, and Run `install-USB-copier.bat` file.   
 
         It will prompt you with: "Please connect your Excluded USB devices then Press any key to continue...".  
 
