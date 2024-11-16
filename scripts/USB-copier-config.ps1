@@ -8,7 +8,7 @@ function GetExcludedDevices {
 
     # Prompt User with Devices to Exclude
     Write-Host "----------------Setting Excluded Storage Devices----------------"
-    Write-Host "Please connect your USB devices then Press any key to continue." -ForegroundColor Cyan
+    Write-Host "Please connect your Excluded USB devices then Press any key to continue..." -ForegroundColor Cyan
     cmd /c pause
 
     $devicesList = [System.Collections.ArrayList]@()
@@ -29,6 +29,11 @@ function GetExcludedDevices {
     Select-Object ID, Model, @{Name="Size";Expression={[string][math]::Round($_.Size/1073741824, 2) + ' GiB'}}, SerialNumber |
     Format-Table -AutoSize
 
+    if($devicesList.Count -eq 0) {
+        Write-Host "`n`n No Devices where Detected!" -ForegroundColor Red
+        Write-Host "Type (done) to continue without excluding any devices. `nOr Exit the Program and try again."
+    }
+    Write-Host "`n`n"
     # TODO: Add the ability to disconnect devices to add more than the available ports on a laptop
     Write-Host "Choose Your Excluded Devices ID (eg. 0, 1 or 2)"
     Write-Host "Type `"all`" to select All devices" -ForegroundColor Cyan
@@ -36,31 +41,31 @@ function GetExcludedDevices {
     Write-Host "Type `"done`" if you're Done" -ForegroundColor Green
     Write-Host "Type `"exit`" to Cancel" -ForegroundColor Red
 
-    for ($true) {
-        $userInput = Read-Host "=>"
+    for ($True) {
+        $userDeviceIDInput = Read-Host "=>"
         # Exit Program
-        if ($userInput -eq "exit") {
+        if ($userDeviceIDInput -eq "exit") {
             exit
         # Reset Selection
-        } elseif ($userInput -eq "reset") {
+        } elseif ($userDeviceIDInput -eq "reset") {
             $excludedDevicesIDs = @()
             Write-Host "Resetted"
             # End Loop
-        } elseif ($userInput -eq "done") {
+        } elseif ($userDeviceIDInput -eq "done") {
             break
         # Select All
-        } elseif ($userInput -eq 'all') {
+        } elseif ($userDeviceIDInput -eq 'all') {
             $excludedDevicesIDs = $devicesList
             break
             # Check user input
         }
         else {
             # Check if user Input is valid
-            if ($userInput -in $excludedDevicesIDs) {
+            if ($userDeviceIDInput -in $excludedDevicesIDs) {
                 Write-Host "Error: Device Already Selected!"
             }
-            elseif ($userInput -in $devicesList -and $userInput) {
-                $excludedDevicesIDs += $userInput
+            elseif ($userDeviceIDInput -in $devicesList -and $userDeviceIDInput) {
+                $excludedDevicesIDs += $userDeviceIDInput
             }
             else {
                 Write-Host "Error: Invalid Input!"
@@ -70,11 +75,10 @@ function GetExcludedDevices {
     }
     Write-Host "Selected Devices: ($excludedDevicesIDs) `nDone."
 
+
     foreach ($ID in $excludedDevicesIDs) {
         $global:excludedDevicesSerialNumbers += $devicesDataObject[[int]$ID]
     }
-    # TODO: Remove in Production
-    Write-Host "Serial Numbers: ($global:excludedDevicesSerialNumbers)"
 }
 function CheckNecessaryModules {
     "`n----------------Checking Necessary Modules----------------"
@@ -225,8 +229,7 @@ function SetExcludedDevicesInDb {
 function CreateLogFile {
     if(!(Test-Path $logFilePath -PathType Leaf)) {
         try {
-            New-Item $logFilePath
-            Write-Host "[NEW]: Log file Created!" -ForegroundColor Green
+            New-Item $logFilePath | Out-Null
         } catch {
             Write-Host $_
             Write-Host "[ERROR]: Couldn't Create Log file, Exiting..." -ForegroundColor Red
