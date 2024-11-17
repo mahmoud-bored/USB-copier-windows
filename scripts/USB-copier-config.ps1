@@ -82,23 +82,22 @@ function GetExcludedDevices {
 }
 function CheckNecessaryModules {
     "`n----------------Checking Necessary Modules----------------"
-    # Check for NuGet
-    try {
-        Get-PackageProvider -Name "NuGet" -ForceBootstrap | Format-Table -AutoSize
-        Write-Host "[NEW]: NuGet Installed." -ForegroundColor Green
-    }
-    catch {
-        Write-Host $_
-        Write-Host "[ERROR]: Couldn't Install NuGet, Exiting..." -ForegroundColor Red
-        Start-Sleep -Seconds 5
-        exit
-    }
     # Check for PSSQLite
     if(!(Get-Module -ListAvailable -Name "PSSQLite")) {
         Write-Host "[INFO]: Module PSSQLite Doesn't Exist."
         Write-Host "[PROCESS]: Installing PSSQLite"
         try {
-            Install-Module PSSQLite -Force
+            $sqliteModulePath = "C:\Program Files\WindowsPowerShell\Modules\PSSQLite"
+            if(!(Test-Path $sqliteModulePath)) {
+                New-Item $sqliteModulePath -ItemType Directory
+                Write-Host "[NEW]: Created PSSQLite Module Folder!" -ForegroundColor Green
+            }
+            Copy-Item -Force -Recurse -Verbose "$PSScriptRoot\modules\PSSQLite" -Destination $sqliteModulePath
+            Unblock-File -Path "C:\Program Files\WindowsPowerShell\Modules\PSSQLite\*"
+            # Check if the PSSQLite Module is Installed Correctly 
+            if(!(Get-Module -ListAvailable -Name "PSSQLite")) {
+                Write-Host "[ERROR]: Couldn`'t Install PSSQLite Manually!"
+            }
             Write-Host "[NEW]: PSSQLite Installed Successfully!" -ForegroundColor Green
         } catch {
             Write-Host $_
