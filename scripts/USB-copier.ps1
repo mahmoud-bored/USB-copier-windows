@@ -416,26 +416,38 @@ function CheckDeviceVolumes {
         }
     }
 }
-function RegisterAndCreateDirectories {
+function BuildAndRegisterDirectories {
     [CmdletBinding()]
     param (
         [parameter(Mandatory=$True)]
         [string]$volumeDriveLetter,
         [string]$volumeID
     )
+    LogMessage "[PROCESS::Directory]: Building Directory Tree."
     $volumeBackupPath = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT volume_backup_path FROM volume WHERE volume_id = $volumeID").volume_backup_path  
-    Get-ChildItem -Recurse -Directory "$($volumeDriveLetter)://" | Select-Object FullName, Name | ForEach-Object {
+    # Rebuild Old Diretories Structure
+    LogMessage "[PROCESS::Directory]: Building Old Registered Directory Tree..."
+    $currentDirectoryTree = Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT * FROM directory WHERE volume_id = $volumeID"
+    $localIterator = 0
+    foreach($directory in $currentDirectoryTree) {
+        New-Item -ItemType Directory -Force -Path $($volumeBackupPath + $directory.directory_path) | Out-Null
+        $localIterator++
+    }
+    LogMessage "[PROCESS::Directory]: Old Directory Tree has been built <$localIterator Directories>."
+    LogMessage "[PROCESS::Directory]: Registering New Directory Tree..."
+    # Register New Directories
+    Get-ChildItem -Recurse -Directory -Force "$($volumeDriveLetter)://" | Select-Object FullName, Name | ForEach-Object {
+        # The Sleep is to avoid slowing down the device.
+        Start-Sleep -Milliseconds 100
         $directoryPath = $_.FullName.Replace("$($volumeDriveLetter):", "")
-        $isDirectoryRegistered = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT directory_id FROM directory WHERE directory_path = `"$($directoryPath + '\')`"").directory_id
+        $isDirectoryRegistered = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT directory_id FROM directory WHERE directory_path = `"$($directoryPath + '\')`" AND volume_id = $volumeID").directory_id
         if(!$isDirectoryRegistered) {
             LogMessage "[INFO]: Directory <$($_.FullName)> is Not Registered."
             try {
                 LogMessage "[PROCESS]: Registering New Directory."
                 New-Item -ItemType Directory -Force -Path $($volumeBackupPath + $directoryPath) | Out-Null
                 LogMessage "[NEW]: Created new Folder at <$($volumeBackupPath + $directoryPath)>."
-                LogMessage "Directory Path: $directoryPath"
-                LogMessage "Directory Name: $($_.Name)"
-                LogMessage "Parent Directory: $($directoryPath.Substring(0, ($directoryPath.Length - $_.Name.Length)))"
+                LogMessage "Directory Path: $directoryPath || Directory Name: $($_.Name) || Parent Directory: $($directoryPath.Substring(0, ($directoryPath.Length - $_.Name.Length)))"
                 $query = "INSERT INTO directory (directory_path, directory_name, parent_directory, volume_id)
                                         VALUES (@directoryPath, @directoryName, @parentDirectory, $volumeID)"
                 $queryParams = @{
@@ -466,16 +478,17 @@ function StartBackupForFileExtension {
         [string[]]$fileExtensionExceptions
     )
     $volumeDrivePath = "$($volumeDriveLetter)://"
-    LogMessage "[PROCESS]: Backing Up Files with Extension <$fileExtensionFilter>"
-    Get-ChildItem -Recurse -File $volumeDrivePath -Filter $fileExtensionFilter | 
+    LogMessage "[PROCESS::File]: Backing Up Files with Extension <$fileExtensionFilter>"
+    Get-ChildItem -Recurse -Force -File $volumeDrivePath -Filter $fileExtensionFilter | 
         Where-Object { $_.Extension -notin $fileExtensionExceptions } |
         ForEach-Object {
             # Write-Host "$($_.Name): $($_.FullName)"
+            Start-Sleep -Milliseconds 100
             $directoryPath = $_.FullName.Replace("$($volumeDriveLetter):", "")
             $directoryID = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT directory_id FROM directory WHERE directory_path = `"$($directoryPath.Substring(0,$directoryPath.Length - $_.Name.Length))`"").directory_id
             $lastWriteTimeUtc = [uint64]$_.LastWriteTimeUtc.ToUniversalTime().ToString('yyyyMMddHHmmss')
             $fileSize = [uint64]$_.Length
-            $fileDataFromDb = Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT file_id, last_write_time_utc, file_size FROM file WHERE file_path = `"$directoryPath`""
+            $fileDataFromDb = Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT file_id, last_write_time_utc, file_size FROM file WHERE file_path = `"$directoryPath`" AND volume_id = $volumeID"
             if($fileDataFromDb.file_id) {
                 # Write-Host "File is Already Registered."
                 # Update Registered File in Database 
@@ -504,26 +517,49 @@ function StartBackupForFileExtension {
                     # Write-Host "File is Not Registered."
                     # Register & Copy New File in Database
                     LogMessage "[CHANGE::PROCESS]: New File Detected at <$directoryPath>, Registering New File."
+                    
                     Copy-Item $_.FullName -Destination "$($volumeBackupPath + $directoryPath)"
                     LogMessage "[CHANGE::NEW]: File has been Backed up."
-                    $query = "INSERT INTO file (file_path, file_name, file_extension, file_size, directory_id, volume_id, last_write_time_utc, last_backup_time_utc)
-                                        VALUES (@filePath, @fileName, @fileExtension, @fileSize, @directoryId, @volumeId, @lastWriteTimeUtc, @lastBackupTimeUtc)
-                    "
-                    $queryParams = @{
-                        filePath = $directoryPath
-                        fileName = $_.Name
-                        fileExtension = $_.Extension
-                        fileSize = $fileSize
-                        directoryId = $directoryID
-                        volumeId = $volumeID
-                        lastWriteTimeUtc = $lastWriteTimeUtc
-                        lastBackupTimeUtc = [uint64](Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
-                    } 
-                    Invoke-SqliteQuery -DataSource $dbPath -Query $query -SqlParameters $queryParams
-                    LogMessage "[CHANGE::NEW]: File has been Registered"
                 } catch {
                     LogMessage $_
                     LogMessage "[ERROR]: Couldn't Copy & Register New file."
+
+                    try {
+                        $Error.clear()
+                        LogMessage "[ERROR::Resolving]: Forcing Creation of Non-Existent Directory."
+                        New-Item -Force -ItemType Directory -Path $($volumeBackupPath + $directoryPath.Substring(0,$directoryPath.Length - $_.Name.Length))
+                        Copy-Item $_.FullName -Destination "$($volumeBackupPath + $directoryPath)"
+                        LogMessage "[RESOLVED]: Directory Creation was Forced Successfully."
+                    } catch {
+                        LogMessage $_
+                        LogMessage "[ERROR]: Couldn't Resolve ERROR."
+                    }
+                }
+                
+                if(!$Error) {
+                    try {
+                        $query = "INSERT INTO file (file_path, file_name, file_extension, file_size, directory_id, volume_id, last_write_time_utc, last_backup_time_utc)
+                                            VALUES (@filePath, @fileName, @fileExtension, @fileSize, @directoryId, @volumeId, @lastWriteTimeUtc, @lastBackupTimeUtc)
+                        "
+                        $queryParams = @{
+                            filePath = $directoryPath
+                            fileName = $_.Name
+                            fileExtension = $_.Extension
+                            fileSize = $fileSize
+                            directoryId = $directoryID
+                            volumeId = $volumeID
+                            lastWriteTimeUtc = $lastWriteTimeUtc
+                            lastBackupTimeUtc = [uint64](Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+                        } 
+                        Invoke-SqliteQuery -DataSource $dbPath -Query $query -SqlParameters $queryParams
+                        LogMessage "[CHANGE::NEW]: File has been Registered"
+                    } catch {
+                        LogMessage $_
+                        LogMessage "[ERROR]: Couldn't Register File to Database."
+                        LogMessage "[ERROR::DATA]: "
+                        LogTable $queryParams
+                    }
+
                 }
             }
         }
@@ -572,12 +608,13 @@ function InitiateVolumeBackup {
         [string]$volumeDriveLetter
     )
     $volumeID = (Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT volume_id FROM volume WHERE volume_unique_id = `"$volumeUniqueId`"").volume_id
+    LogMessage "[PROCESS::Volume]: Initiating Volume Backup <$volumeUniqueId> at <$($volumeDriveLetter):\>"
     if(Test-Path -Path "$($volumeDriveLetter):\HC!_dncme.txt" -PathType Leaf) {
         LogMessage "File <HC!_dncme.txt> Found!"
         LogMessage "Cancelling Volume <$volumeUniqueId> Backup."
     } else {
         LogMessage "Backing up <$volumeUniqueId> at <$volumeDriveLetter>"
-        RegisterAndCreateDirectories $volumeDriveLetter $volumeID
+        BuildAndRegisterDirectories $volumeDriveLetter $volumeID
         RegisterAndCopyFiles $volumeDriveLetter $volumeID    
     
         # Update Volume Last Full Backup Date
@@ -601,7 +638,7 @@ function InitiateDeviceBackup {
         [parameter(Mandatory=$True)]
         [string]$deviceSerialNumber
     )
-    LogMessage "[PROCESS]: Initiating Backup <$deviceSerialNumber>"
+    LogMessage "[PROCESS::Device]: Initiating Device Backup <$deviceSerialNumber>"
     $diskVolumes = Get-Disk | Where-Object { $_.SerialNumber -eq $deviceSerialNumber } | Get-Partition | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object DriveLetter, UniqueId, FileSystem, Size, SizeRemaining
     
     # Check if Device Backup Folder Exists
@@ -618,6 +655,9 @@ function InitiateDeviceBackup {
 
     UpdateDeviceData $deviceSerialNumber
     CheckDeviceVolumes $deviceSerialNumber $diskVolumes
+
+    # LogMessage "[WAIT]: waiting 3 minutes before initiating backup."
+    # Start-Sleep -Seconds 180
     foreach($diskVolumeData in $diskVolumes) {
         InitiateVolumeBackup $diskVolumeData.UniqueId $diskVolumeData.DriveLetter
     }
